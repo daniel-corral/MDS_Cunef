@@ -1,0 +1,311 @@
+---
+title: "Modelos No lineales"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Ejemplos
+
+```{r}
+library(knitr)
+```
+
+# Polynomial Regression and Step Functions
+
+
+```{r}
+#http://rpubs.com/ryankelly/GAMs
+# Polynomial Regression and Step Functions
+library(ISLR)
+attach(Wage)
+
+fit = lm(wage~poly(age, 4), data=Wage)
+kable(coef(summary(fit)))
+```
+
+
+```{r}
+#prediccion
+ageLims <- range(age)
+age.grid <- seq(from=ageLims[1], to=ageLims[2])
+
+pred <- predict(fit, newdata = list(age = age.grid),
+                se=TRUE)
+se.bands <- cbind(pred$fit + 2*pred$se.fit,
+                  pred$fit - 2*pred$se.fit)
+plot(age,wage,xlim=ageLims ,cex=.5,col="darkgrey")
+title("Degree -4 Polynomial ",outer=T)
+lines(age.grid,pred$fit,lwd=2,col="blue")
+matlines(age.grid,se.bands,lwd=2,col="blue",lty=3)
+```
+
+
+```{r}
+# test ANOVA
+
+fit.1=lm(wage~age,data=Wage)
+fit.2=lm(wage~poly(age,2),data=Wage)
+fit.3=lm(wage~poly(age,3),data=Wage)
+fit.4=lm(wage~poly(age,4),data=Wage)
+fit.5=lm(wage~poly(age,5),data=Wage)
+
+anova(fit.1, fit.2, fit.3, fit.4, fit.5)
+```
+
+
+```{r}
+#Cross Validation
+
+library(boot)
+
+set.seed(17)
+
+cv.errors <- data.frame(degree=seq(1,5,1), 
+                        error= rep(NA, 5))
+
+for (i in 1:5) {  # loop through 1-5 degree polynomials
+    glm.fit <- glm(wage~poly(age, i), data=Wage)
+    cv.errors$error[i] <- cv.glm(Wage, glm.fit, K=10)$delta[1]
+    
+}
+
+kable(cv.errors)
+
+```
+
+
+```{r}
+#Next we consider predicting whether an individuals earns more than $250 000 per year. Here we use the expression I(wage>250) to create a new boolean response variable. Note we should specify type='response' in the prediction to extract the probabilities.
+
+fit <- glm(I(wage > 250)~poly(age, 4), data=Wage,
+           family=binomial)
+
+pred <- predict(fit, newdata=list(age=age.grid), 
+                se=TRUE, type='response')
+
+
+#However, the confidence intervals for the probabilities would not be sensible, since we end up with some negative probabilities. For generating confidence intervals it makes more sense to transform the logit predictions.
+
+pred <- predict(fit, newdata=list(age=age.grid), 
+                se=TRUE)
+
+pfit <- exp(pred$fit) / (1+exp(pred$fit)) # Convert logit
+se.bands.logit<- cbind(pred$fit + 2*pred$se.fit,
+                  pred$fit - 2*pred$se.fit)
+
+se.bands <- exp(se.bands.logit) / (1+exp(se.bands.logit))
+
+#Plot it:
+
+plot(age,I(wage>250),xlim=ageLims ,type="n",ylim=c(0,.2))
+points(jitter(age), I((wage>250)/5),
+       cex=.5,pch="|", col =" darkgrey ")
+lines(age.grid,pfit,lwd=2, col="blue")
+matlines(age.grid,se.bands,lwd=1,col="blue",lty=3)
+```
+
+
+
+
+# Step Function
+
+
+```{r}
+# Step Function
+
+table(cut(age, 4))
+
+fit <- lm(wage~cut(age, 4), data=Wage)
+coef(summary(fit))
+```
+
+
+#Splines
+
+```{r}
+#Splines
+
+library(splines)
+
+fit <- lm(wage~bs(age, knots=c(25,40,60)), data=Wage)
+pred <- predict(fit, newdata=list(age=age.grid), se=T)
+
+plot(age, wage, col='gray')
+lines(age.grid, pred$fit, lwd=2)
+lines(age.grid, pred$fit+2*pred$se, lty='dashed')
+lines(age.grid, pred$fit-2*pred$se, lty='dashed')
+
+
+```
+
+
+
+```{r}
+# Since we are using a cubic spline with three knots, this produces a spline with six basis functions. This equates to 7 degrees of freedom (including the intercept). We can also use the df = parameter to specify a spline with quantile knots. Note the function also has a degree = option if we want to specify a different type of spline.
+
+dim(bs(age, knots=c(25,40,60)))
+
+dim(bs(age, df=6))
+
+attr(bs(age, df=6), 'knots') # quantiles of `age`
+```
+
+
+```{r}
+#To fit a natural spline we use the ns() function.
+
+fit2 <- lm(wage~ns(age, df=4), data=Wage)
+pred2 <- predict(fit2, newdata=list(age=age.grid), se=T)
+
+# re-plot the data
+plot(age, wage, col='gray')
+lines(age.grid, pred$fit, lwd=2)
+lines(age.grid, pred2$fit, col='red', lwd=2)
+```
+
+
+```{r}
+#We can also fit a smoothing spline with none other than smooth.spline(). Here we fit a spline with 16 degrees of freedom, then spline chosen by cross-validation, which yields 6.8 degrees of freedom.
+
+plot(age, wage, xlim=ageLims, col='gray')
+title('Smoothing Spline')
+fit <- smooth.spline(age, wage, df=16)
+fit2 <- smooth.spline(age, wage, cv=TRUE)
+
+fit2$df
+
+
+lines(fit, col='red', lwd=2)
+lines(fit2, col='blue', lwd=1)
+legend('topright', legend=c('16 DF', '6.8 DF'),
+       col=c('red','blue'), lty=1, lwd=2, cex=0.8)
+```
+
+
+
+#Local Regression
+
+
+```{r}
+#Local Regression
+#To perform local regression we use the loess() function. This function is also built into ggplot2. Here we fit a loess function with span of 0.2 and 0.5: that is, each neighbourhood consists of 20% or 50% of the observations. The larger the span, the smoother the fit.
+
+library(ggplot2)
+
+ggplot(data=Wage, aes(x=age, y=wage))+geom_point(color='gray') +
+    geom_smooth(method='loess', span=0.2) +
+    geom_smooth(method='loess', span=0.5, color='red')+
+    theme_bw()
+
+```
+
+
+
+#GAMs
+```{r}
+#GAMs
+#Now we use a GAM to predict wage using a natural spline of year, age, and education. Since this is simply a linear regression model with several basis functions, we simply use the lm() function.
+
+gam1 <- lm(wage ~ ns(age, 5) + education, 
+           data=Wage)
+#To fit more complex splines, or other components that cannot be specified as basis functions, we need to use the gam library in R. the s() function is used to indicate a smoothing spline.
+
+library(gam)
+## Loaded gam 1.09.1
+gam2 <- gam(wage~s(year, 4) + s(age, 5) + education, 
+            data=Wage)
+#Plot these two models
+
+par(mfrow=c(1, 3))
+plot(gam2, se=TRUE, col='blue')
+
+
+plot(gam1, se=TRUE, col='red')
+```
+
+
+
+
+```{r}
+#It looks like the behaviour if year is rather linear. We can make a new model and then use an ANOVA test to decide between them.
+
+gam3 <- gam(wage~year + s(age, 5) + education, data=Wage)
+
+anova(gam1, gam3, gam2, test='F')
+
+#It seems like that addition of a linear year component is much better than a GAM without year. Yet, there is no evidence that a non-linear function of year is needed, see p-value of 0.34.
+
+summary(gam2)
+
+
+#Within the model with the non-linear relationship for year we can again confirm that this component does not contribute to the model.
+
+#Next we fit a local regression as building blocks in a GAM using the lo() function.
+
+gam.lo <- gam(wage ~ s(year, df=4) + lo(age, span=0.7) + education,data=Wage)
+gam(gam.lo, se=TRUE, col='green')
+```
+
+
+
+
+#Ejemplos 2
+
+```{r}
+
+library(magrittr)
+library(splines)
+library(MASS)
+library(ggplot2)
+library(reshape2)
+
+data(mcycle)
+
+baseplot1 <- ggplot(data = mcycle, mapping = aes(x = times, y = accel)) +
+    layer(geom = "point",stat = "identity",position = "identity") +
+    theme_bw() + theme(legend.key = element_blank())
+baseplot1
+
+knots <- c(15,20,32,40)
+mcycle$X1 <- pmax(0, mcycle$times - knots[1])
+mcycle$X2 <- pmax(0, mcycle$times - knots[2])
+mcycle$X3 <- pmax(0, mcycle$times - knots[3])
+mcycle$X4 <- pmax(0, mcycle$times - knots[4])
+mcycle
+
+#Linear splines
+lsp <- lm(accel ~ times + X1 + X2 + X3 + X4, data = mcycle)
+summary(lsp)
+
+newdat <- data.frame(times = seq(0,60,0.01))
+newdat$X1 <- pmax(0, newdat$times - knots[1])
+newdat$X2 <- pmax(0, newdat$times - knots[2])
+newdat$X3 <- pmax(0, newdat$times - knots[3])
+newdat$X4 <- pmax(0, newdat$times - knots[4])
+newdat$linear <- predict(lsp, newdata = newdat)
+
+#Quadratic splines
+qsp <- lm(accel ~ times + I(times^2) + I(X1^2) + I(X2^2) + I(X3^2) + I(X4^2), data = mcycle)
+summary(qsp)
+newdat$quadratic <- predict(qsp, newdata = newdat)
+
+#Cubic splines
+csp <- lm(accel ~ times + I(times^2) + I(times^3) + I(X1^3) + I(X2^3) + I(X3^3) + I(X4^3), data = mcycle)
+summary(csp)
+
+newdat$cubic <- predict(csp, newdata = newdat)
+#Plot splines
+newdatMelt <- melt(data          = newdat,
+                   id.vars       = c("times",paste0("X",1:4)),
+                   variable.name = "spline",
+                   value.name    = "value")
+
+baseplot1 +
+    layer(geom = "line", data = newdatMelt,stat = "identity", position = "identity",
+          mapping = aes(x = times, y = value, color = spline)) +
+    facet_wrap( ~ spline, ncol = 1)
+
+```
+
+

@@ -1,0 +1,209 @@
+---
+title: "Prediccion1"
+author: "Yo"
+date: "10/10/2019"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+```
+```{r}
+#En primer lugar cargmos las librerias que vamos a necesitar
+library(readr)
+library(tidyverse)
+library(nortest)
+library(fBasics)
+```
+```{r}
+#A continuación cargamos la base de datos y le llamamos nba
+nba <- read_csv("Predicción/Sesión 1/Homework/nba.csv")
+View(nba)
+```
+```{r}
+
+#Renombramos las variables para que sea mas sencillo ejecutar las instrucciones y
+#para entender mejor qué representa cada una de ellas
+
+nba <- rename(nba ,"jugador" = "Player", "salario" = "Salary", "pais" = "NBA_Country", "ranking" = "NBA_DraftNumber","edad" = "Age", "equipo" = "Tm", "partidos_jugados" = "G", "minutos_jugados" = "MP", "eficiencia" = "PER", "acierto_tiro" = "TS%", "intento_triple" = "3PAr", "intento_libre" = "FTr", "rebote_ataque" = "ORB%", "rebote_defensa" = "DRB%", "rebotes_total" = "TRB%","asistencia" = "AST%", "robo" = "STL%", "bloqueo" = "BLK%", "perdida_balon" = "TOV%", "compañerismo" = "USG%", "buen_ataque" = "OWS", "buena_defensa" = "DWS", "bueno_total" = "WS", "contribucion" = "WS/48", "ptos_ofensivos_vsmedia" = "OBPM", "ptos_defensivos_vsmedia" = "DBPM", "ptos_vsmedia" = "BPM", "ptos_vsmedia_competdirecto" = "VORP")
+```
+```{r}
+# Aplicamos estas funciones para que se eliminen los duplicados de nuestra base de
+#datos y los registros con NA que pueda haber en alguna variable
+
+nba <- unique(nba)
+nba <- na.omit(nba)
+```
+```{r}
+#Y ahora creamos la regresión lineal, pero no vamos a incluir las variables
+#equipo, el nombre del jugador y el país ya que no son relevantes a la hora de
+#estimar el salario, lo que necesitamos tener en cuenta son las habilidades de
+#cada jugador y las estadísticas. 
+
+modelo <- lm(salario ~ ranking + edad + partidos_jugados + minutos_jugados +
+               eficiencia + acierto_tiro + intento_triple + intento_libre +
+               rebote_ataque + rebote_defensa + rebotes_total + asistencia + 
+               robo + bloqueo + perdida_balon + compañerismo + buen_ataque +
+               buena_defensa + bueno_total+ contribucion + ptos_ofensivos_vsmedia
+             +ptos_defensivos_vsmedia + ptos_vsmedia + ptos_vsmedia_competdirecto,
+             data = nba)
+summary(modelo)
+```
+```{r}
+#utilizamos el método de selección Backward Stepwise, el cual empieza con un
+#modelo que incluye todos los regresores y se van eliminando regresores de uno en
+#uno. En cada etapa la variable que menos mejora adicional aporta al modelo es
+#excluida.
+library(MASS)
+library(leaps)
+stepAIC(modelo, direction = "backward")
+
+```
+```{r}
+#Creamos el modelo con las variables cuyo AIC es menor y que nos ha indicado la
+#instruccion anterior "stepAIC" Step:  AIC=14923.2
+
+modelo2 = lm(salario ~ ranking + edad + partidos_jugados + minutos_jugados +
+               eficiencia + intento_triple + rebote_ataque + rebotes_total +
+               compañerismo + bueno_total + ptos_ofensivos_vsmedia, data = nba )
+
+summary(modelo2)
+```
+```{r}
+# Ahora procedemos a detectar la multicolinealidad que es la existencia de alta
+#correlación entre los predictoresy  puede producir problemas de imprecisión 
+#de los estimadores (las varianzas de los estimadores son mayores de lo que
+#deberían ser). Así, los intervalos de confianza son muy anchos, hay dificult
+#ad para interpretar los coeficientes y se tiende a no rechazar las hipótesis
+#nula de significación.
+#Para detectar la multicolinealidad utilizamos el factor de inflación de 
+#varianza (VIF)
+library(car)
+vif(modelo2)
+```
+```{r}
+sqrt(vif(modelo2)) > 2 
+#Para cualquier regresor la raíz del VIF indica cuantas veces es la varianza
+#del estimador es mayor que la que se obtendrí
+#a si no hubiera correlación entre los regresores.
+#Cuando es mayor que  dos (TRUE), hay problemas de multicolinealidad, 
+#por lo que eliminamos esas variables ya que significa 
+#que están correlacionadas entre sí
+```
+```{r}
+#Vemos que hay problemas de multicolinealidad en las variables: partidos jugados,
+#minutos jugados, eficiencia, rebotes total y puntos ofensivos vs media.
+#Quitamos eficiencia que tiene el valor más alto y creamos un nuevo modelo sin esa variable
+
+modelo2.1 = lm(salario ~ ranking + edad + partidos_jugados + minutos_jugados + 
+                 intento_triple + rebote_ataque + rebotes_total + compañerismo + 
+                 bueno_total + ptos_ofensivos_vsmedia, data = nba )
+
+summary(modelo2.1)
+```
+```{r}
+#y volvemos a realizar el test de Multicolinealidad con el nuevo modelo que no 
+#incluye minutos
+
+vif(modelo2.1)
+```
+```{r}
+sqrt(vif(modelo2.1)) > 2
+```
+```{r}
+#Vemos que ahora ya no tenemos problema de multicolinearidad en la variable partidos
+#jugados pero continuamos teniendo problemas de 
+#multicolinealidad en las variables:
+#minutos_jugados, rebotes total y puntos ofensivos vs media.
+#Así que ahora creamos un nuevo modelo sin la variable minutos_jugados ya que tiene 
+#un valor más alto
+
+modelo2.2 = lm(salario ~ ranking + edad + partidos_jugados + intento_triple + 
+                 rebote_ataque + rebotes_total + compañerismo + bueno_total 
+               + ptos_ofensivos_vsmedia, data = nba )
+
+summary(modelo2.2)
+```
+```{r}
+#y volvemos a realizar el test de Multicolinealidad con el nuevo modelo que no 
+#incluye ni minutos ni eficiencia
+
+vif(modelo2.2)
+```
+```{r}
+sqrt(vif(modelo2.2)) > 2
+```
+```{r}
+# Comprobamos que ya no existe correlación entre los regresores, así que ya podemos 
+#crear el modelo definitivo con estas variables. 
+
+
+modelo_definitivo = lm(salario ~ ranking + edad + partidos_jugados + intento_triple + 
+                         rebote_ataque + rebotes_total + compañerismo + 
+                         bueno_total + ptos_ofensivos_vsmedia, data = nba )
+                       
+summary(modelo_definitivo)
+```
+```{r}
+#Comparamos los dos modelos y observamos que el BIC del modelo definitivo es es menor 
+#que el del primer modelo con todos los regresores, 
+#por lo que nuestro modelo definitivo es mejor
+
+BIC(modelo,modelo_definitivo)
+
+```
+```{r}
+#CROSS VALIDATION, VALIDATION SET
+#Separamos la muestra en dos partesde forma aleatoria en dos submuestras. Y utilizamos 
+#una para el training (para estimar el modelo) 
+#y la otra para el testing (para predecir el modelo).
+library(ISLR)
+set.seed(8)
+numnba = nrow(nba) #Submuestra1
+train = sample(numnba, numnba/2)
+
+regres.train = lm(salario~(ranking + edad + partidos_jugados + minutos_jugados + 
+                             rebote_defensa + compañerismo + buen_ataque + 
+                             bueno_total + ptos_ofensivos_vsmedia), nba , subset = train )
+attach(nba) #Submuestra2
+
+mean((salario - predict(regres.train, Auto))[-train ]^2)
+sqrt(mean((salario - predict(regres.train, Auto))[-train ]^2))
+
+#Obtenemos que el error medio es igual a 4999060
+```
+```{r}
+#Hacemos la representacion Gráfica del modelo:
+
+library(car)
+qqPlot(modelo_definitivo, labels = row.names(nba), id.method = "identify",
+      simulate = TRUE, main = "Q-Q Plot")
+```
+```{r}
+#Validacion Global
+
+library(gvlma)
+
+validacion_global <- gvlma(modelo_definitivo) 
+summary(validacion_global)
+
+gvlma(x = modelo_definitivo)
+#Así obtenemos la evaluación de mi modelo.
+```
+```{r}
+#Hacemos la Prediccion de un jugador al azar, por ejemplo de Danny Green
+
+predict.lm(modelo_definitivo,data.frame(edad = 30 , ranking = 46 , partidos_jugados = 67 , 
+                                        intento_triple = 0.572, 
+                                        rebotes_total = 7.7, rebote_ataque = 2.6, compañerismo = 16.5 , 
+                                        bueno_total = 3 , 
+                                        ptos_ofensivos_vsmedia = -1 ))
+```
+```{r}
+#Como podemos observar, mi modelo predice que Danny Green debería cobrar 7167067 euros, 
+#en la realidad cobra 10 millones. 
+#En base a mi modelo predictivo este jugador estaría sobrevaluado 
+```

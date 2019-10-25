@@ -1,0 +1,191 @@
+---
+title: "Practica_bikes"
+author: "Yo"
+date: "22/10/2019"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Cargamos las librerías que vamos a necesitar
+```{r}
+#Librerias
+library(readr)
+library(magrittr)
+library(splines)
+library(MASS)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(gam)
+library(here)
+library(tidyverse)
+library(skimr) # Hacer summary más detallado
+library(magrittr) # para operar con PIPE
+library(corrplot) # Correlaciones
+library(ggcorrplot)  # Correlaciones
+library(PerformanceAnalytics) # Correlaciones
+library(leaps) # Seleccion de modelos
+library(caret) # Cross Validation
+library(bestglm) # Cross Validation
+library(glmnet) # Regularización
+library(rsample)
+library(dplyr)
+library(boot)
+```
+
+Cargamos la base de datos y ejecutamos dos resúmenes de la base de datos.
+El segundo (skim) nos información más detallada.
+
+```{r}
+day <- read_csv("day.csv")
+summary(day)
+skim(day)
+```
+Excluimos las variables "instant" y "dteday" ya que son de tipo factor.
+```{r}
+variables <- c("instant","dteday")
+```
+Y, a continuación observamos las correlaciones del resto de variables.
+```{r}
+corrplot(cor(day %>% 
+               select_at(vars(-variables)), 
+             use = "complete.obs"), 
+         method = "circle",type = "upper")
+ggcorrplot(cor(day %>% 
+                 select_at(vars(-variables)), 
+               use = "complete.obs"),
+           hc.order = TRUE,
+           type = "lower",  lab = TRUE)
+chart.Correlation(day %>% 
+                    select_at(vars(-variables)),
+                  histogram = TRUE, pch = 14)
+
+```
+Ahora vamos a calcular los grados de libertad de las variables (excepto de las que son categóricas o dummies).
+```{r}
+temp_df <- smooth.spline(day$temp, day$cnt, cv = TRUE)
+temp_df$df
+
+atemp_df <- smooth.spline(day$atemp, day$cnt, cv = TRUE)
+atemp_df$df
+
+humedad_df <- smooth.spline(day$hum, day$cnt, cv = TRUE)
+humedad_df$df
+
+viento_df <- smooth.spline(day$windspeed, day$cnt, cv = TRUE)
+viento_df$df
+
+casual_df <- smooth.spline(day$casual, day$cnt, cv = TRUE)
+casual_df$df
+
+registrados_df <- smooth.spline(day$registered, day$cnt, cv = TRUE)
+registrados_df$df
+```
+Utilizando la variable temperatura como ejemplo, podemos ver gráficamente la diferencia de utilizar los grados de libertad óptimos para una variable o no(16 df por ejemplo.
+```{r}
+tempodf <- smooth.spline(day$temp, day$cnt, cv = TRUE)
+fittemp <- smooth.spline(day$temp, day$cnt, df = 16)
+
+plot(day$temp, day$cnt, xlim = range(day$temp), col = 'gray')
+lines(fittemp, col = 'red', lwd = 2)
+lines(tempodf, col = 'blue', lwd = 1)
+legend('topleft', legend = c('16 DF', '9.1 DF'),
+       col = c('red','blue'), lty = 1, lwd = 2, cex = 0.8)
+```
+Convertimos a factor las variables categóricas
+```{r}
+mnth <- as.factor(day$mnth)
+yr <- as.factor(day$yr)
+weekday <- as.factor(day$weekday)
+season <- as.factor(day$season)
+weathersit <- as.factor(day$weathersit)
+```
+
+
+Creamos nuestro primer modelo GAM, que recoge el efecto de las variables no lineales 
+```{r}
+GAM1 <- gam(cnt ~ mnth + yr + s(temp, df = 9.103704) + s(atemp, df = 8.805497) + s(hum, df = 4.548876) + s(windspeed, df = 6.007664) + weekday + season + weathersit + workingday + holiday, data = day)
+plot(GAM1, se = TRUE, col = 'blue')
+```
+Y a continuación miramos en el summary si hay alguna variable que no sea importante y que, por lo tento, podemos eliminar del modelo.
+```{r}
+summary(GAM1)
+```
+
+Ahora vamos a crear diferentes modelos GAM, utilizando diferentes variables.
+
+```{r}
+GAM2 <- gam(cnt ~ mnth + yr + s(temp, df = 9.103704) +s(hum, df = 4.548876) + s(windspeed, df = 6.007664) + season + weathersit + holiday, data = day)
+plot(GAM2, se = TRUE, col = 'blue')
+```
+```{r}
+GAM3 <- gam(cnt ~ mnth + yr + s(temp, df = 9.103704) +s(hum, df = 4.548876) + season + weathersit, data = day)
+plot(GAM3, se = TRUE, col = 'blue')
+```
+
+```{r}
+GAM4 <- gam(cnt ~ yr + s(temp, df = 9.103704) + s(atemp, df = 8.805497) + s(hum, df = 4.548876) + s(windspeed, df = 6.007664) + workingday + holiday, data = day)
+plot(GAM4, se = TRUE, col = 'blue')
+```
+
+```{r}
+GAM5 <- gam(cnt ~ yr + mnth + s(temp, df = 9.103704) + s(atemp, df = 8.805497) + s(hum, df = 4.548876) + s(windspeed, df = 6.007664) + weekday + season + weathersit, data = day)
+plot(GAM5, se = TRUE, col = 'blue')
+```
+
+Y con el test ANOVA comparamos los diferentes modelos con el modelo GAM1 que contiene todas las variables.
+```{r}
+anova(GAM1, GAM2, GAM3, GAM4, GAM4, test = 'F')
+```
+
+Separamos la muestra en train y test, con un 70% en train y el resto en test
+
+```{r}
+set.seed(100)
+day_split <- initial_split((day), prop = .7, strata = "cnt")
+day_train <- training(day_split)
+day_test  <- testing(day_split)
+```
+
+```{r}
+dtrain <- gam(cnt ~ yr + mnth + s(temp, df = 9.103704) + s(atemp, df = 8.805497) + s(hum, df = 4.548876) + s(windspeed, df = 6.007664) + weekday + season + weathersit + workingday + holiday, data = day_train)
+plot(dtrain, se = TRUE, col = "blue")
+```
+Hacemos cross validation para elegir el modelo que menor error tenga.
+```{r}
+cross_val1 <- cv.glm(day_train, GAM1, K = 10)$delta[1]
+cross_val2 <- cv.glm(day_train, GAM2, K = 10)$delta[1]
+cross_val3 <- cv.glm(day_train, GAM3, K = 10)$delta[1]
+cross_val4 <- cv.glm(day_train, GAM4, K = 10)$delta[1]
+cross_val5 <- cv.glm(day_train, GAM5, K = 10)$delta[1]
+```
+
+```{r}
+sqrt(cross_val1)
+sqrt(cross_val2)
+sqrt(cross_val3)
+sqrt(cross_val4)
+sqrt(cross_val5)
+```
+Hacemos la prediccion del mejor modelo según la cross validation (GAM3)
+```{r}
+predict_day_gam <- predict(GAM3, day_test)
+test_error_gam <- mean((predict_day_gam - day_test$cnt)^2)
+test_error_gam
+```
+Y vemos el error de nuestro modelo final
+```{r}
+sqrt(test_error_gam)
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,266 @@
+---
+title: "predecir precio vivienda"
+author: "Yo"
+date: "11/10/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rsample)  # data splitting 
+library(glmnet)   # implementing regularized regression approaches
+library(dplyr)    # basic data manipulation procedures
+library(ggplot2)  # plotting
+```
+
+```{r}
+# Create training (70%) and test (30%) sets for the AmesHousing::make_ames() data.
+# Use set.seed for reproducibility
+
+set.seed(123)
+ames_split <- initial_split(AmesHousing::make_ames(), prop = .7, strata = "Sale_Price") #con los dos puntos no cargo la libreria entera, asi no peto el disco duro, solo llamo a la funcion de esa libreria . #separa muestra en 70%
+ames_train <- training(ames_split)
+ames_test  <- testing(ames_split)
+```
+
+```{r}
+# fit with two strongly correlated variables
+lm(Sale_Price ~ Gr_Liv_Area + TotRms_AbvGrd, data = ames_train)
+## 
+## Call:
+## lm(formula = Sale_Price ~ Gr_Liv_Area + TotRms_AbvGrd, data = ames_train)
+## 
+## Coefficients:
+##   (Intercept)    Gr_Liv_Area  TotRms_AbvGrd  
+##       49953.6          137.3       -11788.2
+```
+
+```{r}
+# fit with just Gr_Liv_Area
+lm(Sale_Price ~ Gr_Liv_Area, data = ames_train)
+## 
+## Call:
+## lm(formula = Sale_Price ~ Gr_Liv_Area, data = ames_train)
+## 
+## Coefficients:
+## (Intercept)  Gr_Liv_Area  
+##       17797          108
+
+# fit with just TotRms_Area
+lm(Sale_Price ~ TotRms_AbvGrd, data = ames_train)
+## 
+## Call:
+## lm(formula = Sale_Price ~ TotRms_AbvGrd, data = ames_train)
+## 
+## Coefficients:
+##   (Intercept)  TotRms_AbvGrd  
+##         26820          23731
+```
+```{r}
+# Create training and testing feature model matrices and response vectors.
+# we use model.matrix(...)[, -1] to discard the intercept
+#tenemos que encontrar el valor de lambda, que minimiza nuestro error
+ames_train_x <- model.matrix(Sale_Price ~ ., ames_train)[, -1]
+ames_train_y <- log(ames_train$Sale_Price) #log porque quiero la variable objetivo, y puede que tenga problemas en la varianza, tendriamos que hacer lo mismo en los salarios, la no linealidad se resuelve con el log. eliminar heterodasticidad en la varianzade las variables
+
+ames_test_x <- model.matrix(Sale_Price ~ ., ames_test)[, -1]
+ames_test_y <- log(ames_test$Sale_Price)
+
+# What is the dimension of of your feature matrix?
+dim(ames_train_x)
+## [1] 2054  307 #individuos variables 
+```
+
+```{r}
+# Apply Ridge regression to ames data (definir el modelo)
+ames_ridge <- glmnet( #ahora utilizamos glmnet
+  x = ames_train_x, #cual es la x
+  y = ames_train_y, #cual es la y, no podemos poner el dataframe entero
+  alpha = 0 #cresta Ridge
+)
+#estimacion del modelo con diferentes lambdas, nos calcula el error y el valor del lambda en el gradico
+plot(ames_ridge, xvar = "lambda") #grafico de la estimacion del modelo
+```
+```{r}
+# lambdas applied to penalty parameter
+ames_ridge$lambda %>% head()
+## [1] 279.1035 254.3087 231.7166 211.1316 192.3752 175.2851
+
+# coefficients for the largest and smallest lambda parameters
+coef(ames_ridge)[c("Gr_Liv_Area", "TotRms_AbvGrd"), 100] #coeficientes muy pequeños para el modelo 100 de los muchos que ha estimado 
+##   Gr_Liv_Area TotRms_AbvGrd 
+##  0.0001004011  0.0096383231
+coef(ames_ridge)[c("Gr_Liv_Area", "TotRms_AbvGrd"), 1]  #este es otro modelo estumado
+##   Gr_Liv_Area TotRms_AbvGrd 
+##  5.551202e-40  1.236184e-37
+```
+```{r}
+# Apply CV Ridge regression to ames data, ponemos la funcion cross validation
+ames_ridge <- cv.glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 0
+)
+
+# plot results, y ahi ya nos sale la funcion 
+plot(ames_ridge)
+```
+```{r}
+min(ames_ridge$cvm)       # minimum MSE, de todos los modelos, este es el menor mse
+## [1] 0.02147691 
+ames_ridge$lambda.min     # lambda for this min MSE, para ese mse se utiliza este lambda
+## [1] 0.1236602
+
+ames_ridge$cvm[ames_ridge$lambda == ames_ridge$lambda.1se]  # 1 st.error of min MSE
+## [1] 0.02488411 #
+ames_ridge$lambda.1se  # lambda for this MSE
+## [1] 0.6599372
+```
+
+```{r}
+ames_ridge_min <- glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 0
+)
+
+plot(ames_ridge_min, xvar = "lambda")
+abline(v = log(ames_ridge$lambda.1se), col = "red", lty = "dashed") #linea es el modelo q he elegido, y nos salen todas las lambdas 
+```
+
+```{r}
+#problema: valores atipicos, graficamos los valores atipicos. no me cambia el modelo asi que lo podemos dejar. los que si que hay que quitar son los influyentes (son valores lejos de la muestra) y lo eliminamos completamente antes de hacer nada
+coef(ames_ridge, s = "lambda.1se") %>%
+  tidy() %>%
+  filter(row != "(Intercept)") %>%
+  top_n(25, wt = abs(value)) %>%
+  ggplot(aes(value, reorder(row, value))) +
+  geom_point() +
+  ggtitle("Top 25 influential variables") +
+  xlab("Coefficient") +
+  ylab(NULL)
+```
+
+lasso 
+
+```{r}
+## Apply lasso regression to ames data (toda la muestr)
+ames_lasso <- glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 1
+)
+
+plot(ames_lasso, xvar = "lambda")
+```
+
+```{r}
+# Apply CV Ridge regression to ames data (con la VC)
+ames_lasso <- cv.glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 1
+)
+# plot results
+plot(ames_lasso)
+```
+
+```{r}
+min(ames_lasso$cvm)       # minimum MSE
+## [1] 0.02275227
+ames_lasso$lambda.min     # lambda for this min MSE
+## [1] 0.003521887
+
+ames_lasso$cvm[ames_lasso$lambda == ames_lasso$lambda.1se]  # 1 st.error of min MSE
+## [1] 0.02562055
+ames_lasso$lambda.1se  # lambda for this MSE
+## [1] 0.01180396
+```
+
+```{r}
+ames_lasso_min <- glmnet(
+  x = ames_train_x,
+  y = ames_train_y,
+  alpha = 1
+)
+
+plot(ames_lasso_min, xvar = "lambda")
+abline(v = log(ames_lasso$lambda.min), col = "red", lty = "dashed")
+abline(v = log(ames_lasso$lambda.1se), col = "red", lty = "dashed")
+```
+
+```{r}
+coef(ames_lasso, s = "lambda.1se") %>%
+  tidy() %>%
+  filter(row != "(Intercept)") %>%
+  ggplot(aes(value, reorder(row, value), color = value > 0)) +
+  geom_point(show.legend = FALSE) +
+  ggtitle("Influential variables") +
+  xlab("Coefficient") +
+  ylab(NULL)
+```
+
+
+```{r}
+# minimum Ridge MSE
+min(ames_ridge$cvm)
+## [1] 0.02147691
+
+# minimum Lasso MSE
+min(ames_lasso$cvm)
+## [1] 0.02275227
+```
+
+elastic 
+```{r}
+lasso    <- glmnet(ames_train_x, ames_train_y, alpha = 1.0) 
+elastic1 <- glmnet(ames_train_x, ames_train_y, alpha = 0.25) 
+elastic2 <- glmnet(ames_train_x, ames_train_y, alpha = 0.75) 
+ridge    <- glmnet(ames_train_x, ames_train_y, alpha = 0.0)
+
+par(mfrow = c(2, 2), mar = c(6, 4, 6, 2) + 0.1)
+plot(lasso, xvar = "lambda", main = "Lasso (Alpha = 1)\n\n\n")
+plot(elastic1, xvar = "lambda", main = "Elastic Net (Alpha = .25)\n\n\n")
+plot(elastic2, xvar = "lambda", main = "Elastic Net (Alpha = .75)\n\n\n")
+plot(ridge, xvar = "lambda", main = "Ridge (Alpha = 0)\n\n\n")
+```
+```{r}
+# maintain the same folds across all models
+fold_id <- sample(1:10, size = length(ames_train_y), replace=TRUE)
+
+# search across a range of alphas
+tuning_grid <- tibble::tibble(
+  alpha      = seq(0, 1, by = .1), #que vaya de 0.1 en 0.1
+  mse_min    = NA,
+  mse_1se    = NA,
+  lambda_min = NA,
+  lambda_1se = NA
+)
+```
+
+```{r}
+for(i in seq_along(tuning_grid$alpha)) {
+  
+  # fit CV model for each alpha value
+  fit <- cv.glmnet(ames_train_x, ames_train_y, alpha = tuning_grid$alpha[i], foldid = fold_id)
+  
+  # extract MSE and lambda values
+  tuning_grid$mse_min[i]    <- fit$cvm[fit$lambda == fit$lambda.min]
+  tuning_grid$mse_1se[i]    <- fit$cvm[fit$lambda == fit$lambda.1se]
+  tuning_grid$lambda_min[i] <- fit$lambda.min
+  tuning_grid$lambda_1se[i] <- fit$lambda.1se
+}
+
+tuning_grid
+```
+
+```{r}
+#vemos que el minimo alpha es 0.1 cuya lambda es 0.02
+```
+
+
+
+

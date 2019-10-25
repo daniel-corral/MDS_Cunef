@@ -1,0 +1,250 @@
+---
+title: "prediccion2"
+author: "Yo"
+date: "17/10/2019"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+En primer lugar, cargamos las librerías que vamos a necesitar y cargamos la base de datos
+```{r}
+library(rsample)   
+library(glmnet)   
+library(dplyr)   
+library(ggplot2)
+library(readr)
+nba <- read_csv("nba.csv")
+```
+Renombramos las variables para que sea mas sencillo ejecutar las instrucciones y para entender mejor qué representa cada una de ellas
+```{r}
+nba <- rename(nba ,"jugador" = "Player", "salario" = "Salary", "pais" = "NBA_Country", "ranking" = "NBA_DraftNumber","edad" = "Age", "equipo" = "Tm", "partidos_jugados" = "G", "minutos_jugados" = "MP", "eficiencia" = "PER", "acierto_tiro" = "TS%", "intento_triple" = "3PAr", "intento_libre" = "FTr", "rebote_ataque" = "ORB%", "rebote_defensa" = "DRB%", "rebotes_total" = "TRB%","asistencia" = "AST%", "robo" = "STL%", "bloqueo" = "BLK%", "perdida_balon" = "TOV%", "compañerismo" = "USG%", "buen_ataque" = "OWS", "buena_defensa" = "DWS", "bueno_total" = "WS", "contribucion" = "WS/48", "ptos_ofensivos_vsmedia" = "OBPM", "ptos_defensivos_vsmedia" = "DBPM", "ptos_vsmedia" = "BPM", "ptos_vsmedia_competdirecto" = "VORP")
+```
+Aplicamos estas funciones para que se eliminen los duplicados de nuestra base de datos y los registros con NA que pueda haber en alguna variable
+```{r}
+nba <- unique(nba)
+nba <- na.omit(nba)
+```
+Y ahora creamos la regresión lineal, pero no vamos a incluir las variables equipo, el nombre del jugador y el país ya que no son relevantes a la hora de estimar el salario, lo que necesitamos tener en cuenta son las habilidades de cada jugador y las estadísticas. 
+```{r}
+modelo <- lm(salario ~ ranking + edad + partidos_jugados + minutos_jugados +
+               eficiencia + acierto_tiro + intento_triple + intento_libre +
+               rebote_ataque + rebote_defensa + rebotes_total + asistencia + 
+               robo + bloqueo + perdida_balon + compañerismo + buen_ataque +
+               buena_defensa + bueno_total+ contribucion + ptos_ofensivos_vsmedia
+             +ptos_defensivos_vsmedia + ptos_vsmedia + ptos_vsmedia_competdirecto,
+             data = nba)
+summary(modelo)
+```
+Ahora procedemos a detectar la multicolinealidad que es la existencia de alta correlación entre los predictoresy  puede producir problemas de imprecisión  de los estimadores (las varianzas de los estimadores son mayores de lo que deberían ser). Así, los intervalos de confianza son muy anchos, hay dificultad para interpretar los coeficientes y se tiende a no rechazar las hipótesis nula de significación.
+Para detectar la multicolinealidad utilizamos el factor de inflación de varianza (VIF)
+```{r}
+library(car)
+vif(modelo)
+sqrt(vif(modelo)) > 2 
+```
+Vemos que hay problema de multicolinealidad.
+Para cualquier regresor la raíz del VIF indica cuantas veces es la varianza del estimador es mayor que la que se obtendría si no hubiera correlación entre los regresores.
+Cuando es mayor que  dos (TRUE), hay problemas de multicolinealidad
+
+
+El objetivo es encontrar el modelo que permita predecir con mayor precisión el salario de un jugador.Con la función regsubsets() realizamos stepwise selection en sentido forward  indicándolo en el argumento method.
+Identificamos el valor máximo de R ajustado
+```{r}
+library(MASS)
+library(leaps)
+
+forward <- regsubsets(salario~.-(jugador + pais + equipo), nba, nvmax = 25, method = "forward")
+summary(forward)
+which.max(summary(forward)$adjr2)
+```
+
+Identifica como mejor modelo el formado por 8 predictores
+```{r}
+coef(object = forward, 8) 
+```
+
+```{r}
+summary(forward)$adjr2[8]
+```
+Simple validation set.
+El primer paso del método validation set requiere dividir aleatoriamente las observaciones disponibles en training set y test set. En R se pueden conseguir una división aleatoria empleando índices aleatorios.
+Empleando el training dataset se identifica el mejor modelo para cada posible tamaño. En este paso pueden estudiarse parte de las posibles combinaciones de predictores.
+Se seleccionan índices aleatorios que forman el training dataset y se emplean como training aproximadamente 2/3 de las observaciones, en este caso = 322
+```{r}
+library(leaps)
+set.seed(1)
+train <- sample(x = 1:483, size = 322, replace = FALSE) # Los restantes forman el test dataset
+```
+Empleamos forward stepwise selection. hay 25 predictores y queremos estudiar todos los posibles tamaños de modelo, por ese motivo nvmax=25
+
+```{r}
+forward <- regsubsets(salario~.-(jugador + pais + equipo), nba[train,], nvmax = 25, method = "forward")
+```
+Como resultado del proceso de evaluación de regsubsets() se han seleccionado 25 modelos, el mejor para cada tamaño. Para poder compararlos se procede a estimar el validation test error empleando las observaciones que se han excluido del training y que se han designado como test.
+
+```{r}
+
+validation_error <- rep(NA, 25) # Se genera un vector que almacenará el test-error de cada modelo
+#Para obtener el validation-test-error vamos a trabajar con matrices, que es mas fácil
+# Entonces se almacenan los predictores de las observaciones en forma de matriz 
+
+
+test_matrix <- model.matrix(salario~.-(jugador + pais + equipo), nba [-train, ])
+for (i in 1:24) { #para cada modelo "forward"
+  coeficientes <- coef (object = forward, id = i) #extraemos los coeficientes
+  predictores <- test_matrix[,names(coeficientes)] #identificamos los predictores de la matriz
+  predicciones <- predictores %*% coeficientes #obtenemos la prediccion
+  validation_error[i] <- mean((nba$salario[-train] - predicciones)^2) #calculamos la estimación del
+  #test error como el promedio de los residuos al cuadrado (MSE)
+}
+which.min(validation_error)
+```
+
+```{r}
+p <- ggplot(data = data.frame(n_predictores = 1:25,
+                              Estimacion_MSE = validation_error),
+            aes(x = n_predictores, y = Estimacion_MSE)) +
+    geom_line() +
+    geom_point()
+
+p <- p + geom_point(aes(x = n_predictores[which.min(validation_error)], 
+                        y = validation_error[which.min(validation_error)]),
+                        colour = "red", size = 3)
+
+p <- p +  scale_x_continuous(breaks = c(0:25)) + 
+          theme_bw() +
+          labs(title = 'validation MSE vs número de predictores',
+               x =  'número predictores')
+p
+#vemos en el punto rojo el número de predictores (5) con el que obtenemos el mínimo error
+# Con 5 predictores podemos predecir de forma más precisa.
+```
+Ahora que ya sabemos que el modelo tiene que tener 5 predictores, volvemos a ajustar los modelos con 5 predictores pero ahora usando todas las observaciones, tanto de training como de test.
+Como vamos a incluir esas nuevas variables (test) tenemos que volver a elegir el mejor modelo porque igual no son los mismos que los que hemos seleccionado con training
+```{r}
+forward <- regsubsets(salario~.-(jugador + pais + equipo), data = nba, nvmax = 25,
+                              method = "forward")
+coef(object = forward, id = 5)
+#y entonces nos muestra el mejor modelo para todas las variables
+```
+para crear un modelo que permite predecir el salario de los jugadores con las variables disponibles realizamos una regresión elastic net
+
+
+```{r}
+set.seed(100) 
+
+nba_split <- initial_split(nba, prop = .7) #separamos la muestra en 70%
+nba_train <- training(nba_split)
+nba_test  <- testing(nba_split)
+```
+Para realizar la regresion elastic net con la función glmnet() necesitamos como argumento para esa función una matriz con el valor de los predictores y un vestor con la variable respuesta model.matrix() para crear esa matriz
+
+```{r}
+nba_train_x <- model.matrix(salario ~ .-(pais + jugador + equipo), nba_train)[, -1] 
+nba_train_y <- log(nba_train$salario)
+
+nba_test_x <- model.matrix(salario ~ .-(pais + jugador + equipo), nba_test)[, -1]
+nba_test_y <- log(nba_test$salario)
+
+dim(nba_train_x) #estas son las dimensiones de mi matriz
+```
+
+```{r}
+#Si α = 1 estamos en el caso Lasso y si α = 0 estamos en el caso Ridge
+lasso    <- glmnet(nba_train_x, nba_train_y, alpha = 1.0) 
+elastic1 <- glmnet(nba_train_x, nba_train_y, alpha = 0.25) 
+elastic2 <- glmnet(nba_train_x, nba_train_y, alpha = 0.75) 
+ridge    <- glmnet(nba_train_x, nba_train_y, alpha = 0.0)
+
+par(mfrow = c(2, 2), mar = c(6, 4, 6, 2) + 0.1) #esto es para que me salgan los cuatro graficos juntos
+plot(lasso, xvar = "lambda", main = "Lasso (Alpha = 1)\n\n\n")
+plot(elastic1, xvar = "lambda", main = "Elastic Net (Alpha = .25)\n\n\n")
+plot(elastic2, xvar = "lambda", main = "Elastic Net (Alpha = .75)\n\n\n")
+plot(ridge, xvar = "lambda", main = "Ridge (Alpha = 0)\n\n\n")
+```
+
+```{r}
+fold_id <- sample(1:10, size = length(nba_train_y), replace = TRUE)
+
+#Hacemos un grud que haga una busqueda por el rango de alphas 
+tuning_grid <- tibble::tibble(
+  alpha      = seq(0, 1, by = .1), #que vaya de 0.1 en 0.1
+  mse_min    = NA,
+  mse_1se    = NA,
+  lambda_min = NA,
+  lambda_1se = NA)
+
+for (i in seq_along(tuning_grid$alpha)) {
+  fit <- cv.glmnet(nba_train_x, nba_train_y, alpha = tuning_grid$alpha[i], foldid = fold_id)
+  
+  # sacamos los MSE y los valores de lambda
+  tuning_grid$mse_min[i]    <- fit$cvm[fit$lambda == fit$lambda.min]
+  tuning_grid$mse_1se[i]    <- fit$cvm[fit$lambda == fit$lambda.1se]
+  tuning_grid$lambda_min[i] <- fit$lambda.min
+  tuning_grid$lambda_1se[i] <- fit$lambda.1se
+}
+
+tuning_grid
+#y vemos que el lambda mínimo se logra cuando alpha = 1, es decir que nos encontramos ante un caso 
+#lasso 
+```
+
+```{r}
+library(glmnet)
+#realizamos una regresion lasso
+nba_lasso <- glmnet(
+  x = nba_train_x,
+  y = nba_train_y,
+  alpha = 1
+)
+
+plot(nba_lasso, xvar = "lambda") #los coeficientes se acercan a 0 
+#a medida que se incrementa el valor de λ
+
+```
+Con el fin de identificar el valor de λ que da lugar al mejor modelo calculamos el v-test-error utilizan por defecto k=10.
+```{r}
+set.seed(100)
+cv_error_lasso <- cv.glmnet(x = nba_train_x, y = nba_train_y, alpha = 1)
+plot(cv_error_lasso) #este es el grafico del Mean Square Error
+```
+Calculamos el valor de lambda con el que se consigue el mínimo test-error (cv_error_lasso$lambda.min)
+```{r}
+cv_error_lasso$lambda.min 
+```
+Y Valor lambda óptimo: mayor valor de lambda con el que el test-error no se aleja más de 1 sd del mínimo test-error posible.(cv_error_lasso$lambda.1se )
+```{r}
+cv_error_lasso$lambda.1se
+```
+
+
+Obtenemos el modelo predictivo final con el lambda optimo 
+```{r}
+modelo_final_lasso <- glmnet(x = nba_train_x, y = nba_train_y, alpha = 1, lambda = cv_error_lasso$lambda.1se)
+coef(modelo_final_lasso)
+```
+
+Ahora con el modelo final hago una prediccion y calculo el MSE
+
+```{r}
+pred <- predict(modelo_final_lasso, s = modelo_final_lasso$lambda.1se, nba_test_x)
+mse_lasso <- sqrt(mean((nba_test_y - pred)^2))
+mse_lasso #este es el test error a la hora de predecir el salario = 11.15%
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
