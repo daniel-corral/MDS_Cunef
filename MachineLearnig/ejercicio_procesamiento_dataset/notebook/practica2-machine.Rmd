@@ -1,0 +1,257 @@
+---
+title: "GRADIENTE DESCENDIENTE"
+author: "Raquel Fort Serra"
+date: "7/11/2019"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Cargamos librerías
+```{r}
+library(readr)
+library(ISLR)
+library(MASS)
+library(dplyr)
+library(here)
+library(testthat)
+library(ggplot2)
+```
+
+Cargamos también la base de datos.
+La base de datos estña formada por 3 variables y 100 observaciones.
+Las variables son las siguientes:
+- label: toma el valor 0 si el estudiante ha sido admitido en la universidad, y 1 si el estudiante sí ha sido admitido. 
+- score-1: es la nota (sobre 100) de la primera prueba
+- score-2: es la nota (sobre 100)de la segunda prueba
+En esta prueba vamos a realizar un análisis de regresión logística.
+La variable dependiente será label y las explicativas score-1 y score-2
+```{r}
+library(readr)
+data <- read_csv("4_1_data.csv")
+```
+
+Hacemos un pequeño análisis de datos
+```{r}
+summary(data)
+colSums(is.na(data))
+```
+Renombramos las variables para trabajar de forma más cómoda
+```{r}
+data <- rename(data,"score1" = `score-1`)
+data <- rename(data,"score2" = `score-2`)
+```
+Nos hacemos una idea visual de cómo se distribuyen los datos.
+```{r}
+
+plot(data$score1, data$score2, col = as.factor(data$label), xlab = "Score 1", ylab = "Score 2")
+```
+```{r}
+#poner titulos
+hist(data$score1)
+hist(data$score2)
+hist(data$label) #esta es la que nos interesa
+
+```
+Creamos la función Sigmoide y la de Costes.
+
+La funcion Sigmoide nos facilita la interpretacion de los datos y la toma de decisiones. 
+La función de costes es nuestra función objetivo, queremos minimizarla para de esta forma minimzar el error que se comete al estimar si un estudiante es admitido en la universidad o no (que es lo que representa en este caso la función de costes)
+
+
+
+```{r}
+sigmoid <- function(x) { 
+  1 / (1 + exp(-x))
+}
+# grafico de la sigmoide
+ x<- seq(-5,5,0.01)
+ plot(x, sigmoid(x), col="blue", ylim= c(-.2,1))
+ abline(h=0, v=0, col = "gray60")
+
+costFunction <- function(parameters, X, Y) {
+  n <- nrow(X)
+  g <- sigmoid(X %*% parameters)
+  J <- (1/n) * sum((-Y * log(g)) - ((1 - Y) * log(1 - g)))
+  return(J)
+}
+```
+
+
+1. Test the TestGradientDescent function with the training set (4_1_data.csv). Obtain the confusion matrix.
+
+Dataset de entrenamiento y test
+```{r}
+# Dividimos la muestra en training y test
+set.seed(1000)
+n = nrow(data)
+id_train <- sample(1:n, 0.80*n)  #80 % para el train y por lo tanto 20% para test.
+data.train <- data[id_train,]
+data.test <- data[-id_train,]
+```
+
+Creamos las variables de entrenamiento y test.
+```{r}
+# Matrices de Train
+Xtrain <- as.matrix(data.train[,c(1,2)])
+Xtrain <- cbind(rep(1,nrow(Xtrain)),Xtrain)
+Ytrain <- as.matrix(data.train$label)
+# Matrices de Test
+Xtest <- as.matrix(data.test[,c(1,2)])
+Xtest <- cbind(rep(1,nrow(Xtest)),Xtest)
+Ytest <- as.matrix(data.test$label)
+```
+
+Calculamos el coste inicial con los parametros cero (= 0.69). Lo que queremos es reducir el porcentaje de ese coste inicial.
+
+
+```{r}
+#fijamos nuestro vector de parámetros inicial definido como ceros 
+initial_parameters <- rep(0, ncol(Xtrain))  
+#calculamos el coste inicial
+
+initial_cost <- costFunction(initial_parameters, Xtrain, Ytrain)  
+initial_cost
+
+# El error que me saldría si fijo los parámetros a 0. Estás acertando que no entre nadie a la universidad.
+print(paste("El coste inicial de la función es: ", 
+              convergence <- c(costFunction(initial_parameters, Xtrain, Ytrain)), sep = ""))
+```
+obtenemos el número de iteraciones óptimo, para ello vamos a crear una funcion que represente la influencia de las iteraciones en el numero optimo de parametros. 
+
+```{r}
+CostIterations = function(iterations){
+        position <- NULL
+        cost <- NULL
+        i <- 0
+        for (i in (1 : iterations)) {
+                i <- i + 1
+                param_optimiz <- optim(par = initial_parameters, fn = costFunction, X = Xtrain, Y = Ytrain, control = list(maxit = i))
+                parametres <- param_optimiz$par
+                position <- c(position,i)
+                cost <- c(cost,costFunction(parametres,Xtrain,Ytrain))
+        }
+        df_cost <- data.frame(position,cost)
+        
+        print(plot(df_cost$position,df_cost$cost))
+        
+        return(df_cost)
+}
+```
+
+```{r}
+results <- CostIterations(150)
+df_iter_cost <- data.frame(results$position,results$cost)
+```
+     
+Podemos ver que el numero de iteraciones que minimiza el coste es 142 y que el valor final de la función de costes es 0.2008397 (inferior al inicial)
+
+```{r}
+df_iter_cost[df_iter_cost$results.cost == min(df_iter_cost$results.cost),]
+```
+Ahora creamos la funcion TestGradientDescent con las funciones que hemos creado anteriormente
+```{r}
+TestGradientDescent <- function(iterations, X, Y){
+  
+        param_optimiz <- optim(par = initial_parameters, fn = costFunction,
+                                        X = Xtrain, Y = Ytrain, control = list(maxit = iterations))
+        print(param_optimiz)
+        
+        parameters <- param_optimiz$par
+        
+        print(paste("Final Cost Function value: ", 
+                    convergence <- c(costFunction(parameters, X, Y)), sep = ""))
+        
+        return(parameters)
+  
+}
+TestGradientDescent(150, Xtrain, Ytrain)  
+```
+Con esta función vemos los parámetros óptimos que minimizan nuestra funcion de costes. 
+
+
+Ahora comprobamos que los resultados son correctos utilizando la funcion "test_that"
+```{r}
+parameters <- TestGradientDescent(150, X = Xtrain, Y = Ytrain)
+# probability of admission for student (1 = b, for the calculos)
+new_student <- c(1,10,83)
+print("Probability of admission for student:")
+print(prob_new_student <- sigmoid(t(new_student) %*% parameters))
+test_that("Test TestGradientDescent",{
+  parameters <- TestGradientDescent(150, X = Xtest, Y = Ytest)
+  new_student <- c(1,10,83)
+  prob_new_student <- sigmoid(t(new_student) %*% parameters)
+  print(prob_new_student)
+  expect_equal(as.numeric(round(prob_new_student, digits = 5)), 0.00227)
+  
+})
+```
+Vemos que la probabilidad de que un estudiante entre en la universidad con las notas asumidas es de 0.002265077. 
+
+Ahora veremos la Matriz de confusión y el porcentaje de acierto.
+
+Primero vamos a hacer una prediccion con la muestra  test para hacer la matriz de confusión.
+
+```{r}
+predic_prob <- sigmoid(Xtest %*% parameters)
+# probabilidades
+predic_prob <- data.frame(predic_prob)
+```
+
+Y ahora creamos la funcion que calcule la matriz de confusion en funcion de la prediccion de probabilidad que hemos calculado anteriormente.
+
+```{r}
+
+ConfMatrix = table(Ytest, predic_prob$predic_prob, dnn = c("Truth","Predicted"))
+ConfMatrix
+
+accuracy <- 100*sum(diag(table(Ytest, predic_prob$predic_prob)))/sum(table(Ytest, predic_prob$predic_prob)) #incluimos la accuracy para que tambien nos la devuelva
+        
+        print(paste("El accuracy es: ", accuracy))
+```
+La matriz de confusion evalúa la precision y exactitud del modelo.
+
+2. Obtain a graph representing how the cost function evolves depending of the number of iterations.
+
+presentamos la funcion de coste mínima, cuantas más iteraciones más fácil encontrar la funcion mínima de coste 
+
+```{r}
+results <- CostIterations(400)
+
+ggplot(results,aes(x = results$position, y = results$cost)) + geom_line() + xlab('Iteraciones') + ylab('Convergencia')
+```
+
+3. Explore other options using the optim function (see the methods section of the documentation). Explore other ways in R for estimating the Gradient Descent.
+
+```{r}
+args(optim)
+```
+Los métodos que nos muestra la función son:  method = c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN", "Brent"). Utilizando estos diferentes métodos podemos obtenemos distintos parámetros para los cuales la función de coste es la mínima. 
+
+```{r}
+TestGradientDescent2 <- function(iterations, X, Y, method){
+  
+        param_optimiz <- optim(par = initial_parameters, fn = costFunction,
+                                        X = Xtrain, Y = Ytrain,
+                               control = list(maxit = iterations), method = method)
+        
+        parameters <- param_optimiz$par
+
+        
+        return(parameters)
+  
+}
+TestGradientDescent2(150, Xtrain, Ytrain, "BFGS")  #nos muestra los parámetros óptimos al utilizar el método BFGS
+```
+```{r}
+TestGradientDescent2(150, Xtrain, Ytrain, "CG")  #nos muestra los parámetros óptimos al utilizar el método CG
+
+```
+
+
