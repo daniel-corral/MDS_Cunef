@@ -1,0 +1,211 @@
+---
+title: "prestamos-glm"
+author: "Raquel Fort Serra"
+date: "7/11/2019"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Cargamos las librerías
+```{r}
+library(readr)
+library(knitr)
+library(rmarkdown)
+library(faraway)
+library(ISLR)
+library(ggplot2)
+library(ggfortify)
+library(boot)
+library(ROCR)
+library(skimr)
+library(dummies)
+library(MASS)
+```
+
+Cargamos la base de datos
+```{r}
+loan <- read_csv("loan.csv", col_types = cols(int_rate = col_number(), revol_util = col_number()))
+```
+
+Seleccionamos las variables representativas, elegidas a partir de la lectura propuesta en clase
+```{r}
+loan2 <- dplyr::select(loan, c("int_rate", "grade", "home_ownership", "revol_util", "loan_amnt", "dti","annual_inc", "loan_status"))
+remove(loan) #para que no ocupe memoria
+```
+
+Eliminamos NA's
+```{r}
+loan2 <- na.omit(loan2)
+```
+
+Vemos un resumen detallado de la base de datos con las variables seleccionadas
+```{r}
+skim(loan2)
+```
+
+Transformamos las variables "home_ownership" y "grade" en variables numéricas
+```{r}
+#Cambiamos grade, home_ownership. 
+loan2 <- dummy.data.frame(loan2)
+loan2 <- dummy.data.frame(loan2,
+                                 names = "home_ownership")
+loan2 <- dummy.data.frame(loan2,
+                                 names = "grade")
+
+```
+A continuación transformamos la variable "loan_status"
+```{r}
+loan2$loan_status = as.factor(loan2$loan_status)
+loan2$loan_status = as.numeric(loan2$loan_status)
+loan2$loan_status[loan2$loan_status == 1 | loan2$loan_status == 3 | loan2$loan_status == 4] <- 1
+loan2$loan_status[loan2$loan_status == 2 | loan2$loan_status == 5 | loan2$loan_status == 6 | loan2$loan_status == 7 | loan2$loan_status == 8 | loan2$loan_status == 9 | loan2$loan_status == 10] <- 0
+loan2$loan_status = as.factor(loan2$loan_status)
+```
+
+Separamos la muestra en train y test
+```{r}
+set.seed(1234)
+
+n = nrow(loan2)
+id_train <- sample(1:n, 0.80*n)
+loanfinal.train <- loan2[id_train,] 
+loanfinal.test <- loan2[-id_train,]
+
+```
+
+Y creamos el primer modelo glm
+```{r}
+glm1 = glm(loan_status ~ . -gradeG -home_ownershipMORTGAGE, family = "binomial", data = loanfinal.train)
+summary(glm1)
+```
+
+A partir del resultado del modelo glm 1, eliminamos las variables menos significativas para crear un segundo modelo
+```{r}
+glm2 <- glm(loan_status ~ . -gradeG -home_ownershipMORTGAGE - home_ownershipANY - home_ownershipNONE, family = "binomial", data = loanfinal.train)
+
+summary(glm2) #para ver el resultado
+```
+
+Vemos que el AIC es igual en ambos modelos así que los comparamos con el BIC, y nos quedamos con el modelo 2 que tiene un BIC inferior
+```{r}
+BIC(glm1)
+BIC(glm2)
+```
+
+Calculamos probabilidad de corte optima (para minimizar el coste total) haciendo una búsqueda grid search pcut = 0,01 a pcut = 0,99 . 
+Estoy utilizando una función de coste asimétrica suponiendo que dar un mal préstamo cuesta: 10 veces más que el coste de rechazar la solicitud de alguien que puede pagar.
+
+```{r}
+searchgrid = seq(0.01, 0.99, 0.01)
+#el resultado es una matriz donde la primera columna almacena el corte p y la segunda columna almacena el coste
+result = cbind(searchgrid, NA)
+#in the cost function, both r and pi are vectors, r=truth, pi=predicted probability
+cost1 <- function(r, pi){
+  weight1 = 10
+  weight0 = 1
+  c1 = (r == 1) & (pi < pcut) #logical vector - true if actual 1 but predict 0
+  c0 = (r == 0) & (pi > pcut) #logical vector - true if actual 0 but predict 1
+  return(mean(weight1*c1 + weight0*c0))
+}
+glm2 <- glm(loan_status ~ . -gradeG -home_ownershipMORTGAGE - home_ownershipANY - home_ownershipNONE, family = "binomial", data = loanfinal.train); 
+prob <- predict(glm2, type = "response")
+for (i in 1:length(searchgrid))
+{
+  pcut <- result[i,1]
+  #asignamos el coste a la 2 columna
+  result[i,2] <- cost1(loanfinal.train$loan_status, prob)
+}
+plot(result, ylab = "Cost in Training Set")
+```
+
+Nuestro cut off optimo seria 0.456, que nos generaria menores costes
+
+```{r}
+result[which.min(result[,2]),]
+```
+Predicción dentro de la muestra y fuera de la muestra
+
+TRAIN
+Dentro de la muestra (el rendimiento en conjunto de entrenamiento)
+
+La probabilidad de corte elegida es la óptima, igual a 0.4561454. La segunda sentencia genera un vector lógico (VERDADERO o FALSO) para observación del conjunto de entrenamiento que tiene una probabilidad mayor de 0.4561454. La tercera transforma el vector lógico numérico (0 o 1).
+
+```{r}
+prob.glm2.insample <- predict(glm2,type = "response")
+predicted.glm2.insample <- prob.glm2.insample > 0.4561454
+predicted.glm2.insample <- as.numeric(predicted.glm2.insample)
+```
+
+Calculamos la matriz de confusión:
+
+```{r}
+table(loanfinal.train$loan_status, predicted.glm2.insample, dnn = c("Truth","Predicted"))
+```
+
+Calculamos la tasa de error
+
+```{r}
+mean(ifelse(loanfinal.train$loan_status != predicted.glm2.insample, 1, 0))
+```
+
+TEST
+Fuera de la muestra (el rendimiento en conjunto de prueba)
+
+
+```{r}
+prob.glm2.outsample <- predict(glm2, loanfinal.test, type = "response")
+predicted.glm2.outsample <-  prob.glm2.outsample > 0.4561454
+predicted.glm2.outsample <- as.numeric(predicted.glm2.outsample)
+table(loanfinal.test$loan_status, predicted.glm2.outsample, dnn = c("Truth","Predicted"))
+```
+
+Calculamos la tasa de error
+```{r}
+mean(ifelse(loanfinal.test$loan_status != predicted.glm2.outsample, 1, 0))
+```
+La tasa de error de predicción fuera de muestra es inferior a la tasa de errores en la muestra. 
+
+
+Curva ROC
+Para obtener la curva ROC es necesario instalar la librería verificación.
+
+```{r}
+library('verification')
+```
+
+```{r}
+roc.plot(loanfinal.test$loan_status == '1', prob.glm2.outsample)
+```
+```{r}
+roc.plot(loanfinal.test$loan_status == '1', prob.glm2.outsample)$roc.vol
+```
+Podemos compara en el mismo gráfico los dos modelos
+```{r}
+prob.glm1.outsample <- predict(glm1,loanfinal.test, type = "response")
+roc.plot(x = loanfinal.test$loan_status == '1', pred = cbind(prob.glm1.outsample,prob.glm2.outsample), legend = TRUE, leg.text = c("Full Model","X_3, X_8, and X_11_2"))$roc.vol
+```
+
+En conclusión, el modelo 2 tiene ligeramente una mayor capacidad discriminante que el modelo 1.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
